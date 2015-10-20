@@ -25,18 +25,10 @@
 
 using namespace std;
 
-enum TYPE {
-  SYN,
-  SYNACK,
-  ACK
-};
-
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist);
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
-                   ConnectionList<TCPState> &clist);
-void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
-                   TYPE HeaderType, int size, bool isTimeout);
+                     ConnectionList<TCPState> &clist);
 
 //struct TCPState {
     // need to write this
@@ -72,8 +64,8 @@ int main(int argc, char * argv[]) {
     MinetSendToMonitor(MinetMonitoringEvent("Can't accept from sock_module"));
     return -1;
   }
-  cerr << "tcp_module Part A VERSION handling tcp traffic.......\n";
-  MinetSendToMonitor(MinetMonitoringEvent("tcp_module Part A VERSION handling tcp traffic........"));
+  cerr << "tcp_module STUB VERSION handling tcp traffic.......\n";
+  MinetSendToMonitor(MinetMonitoringEvent("tcp_module STUB VERSION handling tcp traffic........"));
 
   MinetEvent event;
   double timeout = 1;
@@ -103,10 +95,15 @@ int main(int argc, char * argv[]) {
 }
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
-                ConnectionList<TCPState> &clist) {
-  cerr << "\n~~~~~~~~~~~~~~~STARTING HANDLE PACKET~~~~~~~~~~~~~~~\n";
+                     ConnectionList<TCPState> &clist) {
+  //announce mux processing start
+  cerr << "\n -----------handle_packet start-----------\n";
+
+  //Receive packet from Minet
   Packet p;
   MinetReceive(mux, p);
+
+  //Get TCP and IP headers from packet
   unsigned short len;
   len = TCPHeader::EstimateTCPHeaderLength(p);
   p.ExtractHeaderFromPayload<TCPHeader>(len);
@@ -114,119 +111,179 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   tcph = p.FindHeader(Headers::TCPHeader);
   IPHeader iph;
   iph = p.FindHeader(Headers::IPHeader);
-  //Testing Make Packet
-  /*
+
+  //cerr headers
+  cerr << "IP Header: \n" << iph << endl;
+  cerr << "----\n";
+  cerr << "TCP Header: \n" << tcph << endl;
+  cerr << "----\n";
+
+  //examine checksum
+  bool checksum = tcph.IsCorrectChecksum(p);
+  if(!checksum){
+    cerr << "Checksum is invalid! \n";
+    return;
+  }
+
+  //get source/dest IPs and Ports, place in new connection
+  //account for flipping of source/dest here as well
   Connection conn;
-  conn.src = "192.168.1.1";
-  conn.dest = "192.169.122.1";
-  conn.destport = 5050;
-  conn.srcport = 5050;
-  ConnectionToStateMapping<TCPState> CTSM(conn, Time(0.0), TCPState(), false);
-  make_packet(p, CTSM, SYN, 0, false);
-  */
+  iph.GetSourceIP(conn.dest);
+  iph.GetDestIP(conn.src);
+  tcph.GetSourcePort(conn.destport);
+  tcph.GetDestPort(conn.srcport);
+  iph.GetProtocol(conn.protocol);
+  cerr << "Connection Rcvd: \n" << conn << endl;
+  cerr << "----\n";
+
+  //Get information from packet via headers
+  unsigned char flag;
+  unsigned int ack;
+  unsigned int seqnum;
+  unsigned short window_size;
+  unsigned short urgent;
+  unsigned char tcph_size;
+  unsigned char iph_size;
+  unsigned short content_size;
+
+  tcph.GetFlags(flag);
+  tcph.GetAckNum(ack);
+  tcph.GetSeqNum(seqnum);
+  tcph.GetWinSize(window_size);
+  tcph.GetUrgentPtr(urgent);
+  tcph.GetHeaderLen(tcph_size);
+  iph.GetHeaderLength(iph_size);
+  iph.GetTotalLength(content_size);
+
+  cerr << "Header Flags: " << static_cast<unsigned>(flag) << endl;
+  cerr << "Ack Num: " << ack << endl;
+  cerr << "Seq Num: " << seqnum << endl;
+  cerr << "Window Size: " << window_size << endl;
+  cerr << "Urgent: " << urgent << endl;
+  cerr << "TCP Header Size: " << static_cast<unsigned>(tcph_size) << endl;
+  cerr << "IP Header Size: " << static_cast<unsigned>(iph_size) << endl;
+  cerr << "Content Size: " << content_size << endl;
+  cerr << "----\n";
+
+  content_size = content_size - tcph_size - iph_size;
+
+  cerr << "Packet Content Size: \n" << content_size << endl;
+  cerr << "----\n";
+
+  //Get packet content
+  Buffer content;
+  content = p.GetPayload().ExtractFront(content_size);
+
+  //get state information
+  unsigned int curr_state;
+
+  ConnectionList<TCPState>::iterator list_search = clist.FindMatching(conn);
+
+  if( list_search == clist.end() ){
+    cerr << "Connection is not in the ConnectionList." << endl;
+  }
+
+  curr_state = list_search->state.GetState();
+
+  cerr << "Current State: " << curr_state << endl;
+  cerr << "----\n";
+
+  Packet p_send;
+
+  switch(curr_state){
+
+    case LISTEN:
+        cerr << "\n -----------LISTEN-----------\n";
+        if( IS_SYN(flag) ){
+
+          //update data
+          list_search-->connection = conn;
+          list_search-->state.SetState(SYN_RCVD);
+          list_search-->last_acked = list_search-->state.last_sent;
+          list_search-->state.SetLastRecvd(seqnum + 1);
+
+          // for timeout, dont need right now
+          // list_search-->bTmrActive = true;
+          // list_search-->timeout=Time() + 5;
+
+          //synack packet
+          list_search-->state.last_sent = list_search-->state.last_sent + 1;
+
+          make_packet(p_send, list_search, HEADERTYPE_SYNACK, 0, false);
+
+          MinetSend(mux, p_send);
+        }
+        cerr << "\n -----------END LISTEN-----------\n";
+        break;
+
+    case SYN_RCVD:
+        cerr << "\n -----------SYN_RCVD-----------\n";
+        list_search-->state.SetState(ESTABLISHED);
+        list_search-->state.SetLastAcked(ack);
+        list_search-->state.SetSendRwnd(window_size);
+        list_search-->state.last_sent = list_search-->state.last_sent + 1;
+
+        //for timeout
+        // list_search-->bTmrActive = false;
+
+        static SockRequestResponse * write = NULL;
+        write = new SockRequestResponse(WRITE, list_search-->connection, content, 0, EOK);
+        MinetSend(sock, *write);
+        delete write;
+
+        cerr << "\n Connection Established. \n";
+        cerr << "\n -----------END SYN_RCVD-----------\n";
+        break;
+
+    case SYN_SENT:
+        cerr << "\n -----------SYN_SENT-----------\n";
+
+        if( (IS_SYN(flag) && IS_ACK(flag)) ){
+
+          list_search-->state.SetSendRwnd(window_size);
+          list_search-->state.SetLastRecvd(seq + 1);
+          list_search-->state.last_acked = ack;
+
+          //make ack packet
+          list_search-->state.last_sent = list_search.last_sent + 1;
+          make_packet(p_send, list_search, HEADERTYPE_ACK, 0, false);
+
+          MinetSend(mux, p_send);
+
+          list_search-->state.SetState(ESTABLISHED);
+
+          //for timeout
+          list_search-->bTmrActive = false;
+
+          SockRequestResponse write (WRITE, list_search-->connection, content, 0, EOK);
+          MinetSend(sock, write);
+
+        }
+      cerr << "\n -----------END SYN_RCVD-----------\n";
+      break;
+  }
+
+
+
+
+  //show end of this packet processing
+  cerr << "\n -----------handle_packet end-----------\n";
 }
 
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
                    ConnectionList<TCPState> &clist) {
   SockRequestResponse req;
   MinetReceive(sock, req);
-  Packet p;
-  ConnectionList<TCPState>::iterator iter = clist.FindMatching(req.connection);
-  if (iter == clist.end()) {
-    cerr << "\nUnable to find the connection in the list.\n";
-    switch (req.type) {
-      case CONNECT: {
-        // Active Open
-        cerr << "\n~~~~~~~~~~~~~~~CONNECT CASE~~~~~~~~~~~~~~~\n";
-        TCPState state(1, SYN_SENT, 5);
-        ConnectionToStateMapping<TCPState> CTSM(req.connection, 
-                                                  Time(), state, false);
-        clist.push_back(CTSM);
-        make_packet(p, CTSM, SYN, 0, false);
-        MinetSend(mux, p);
-        // Tell other modules?
-        cerr << "\n~~~~~~~~~~~~~~~End CONNECT CASE~~~~~~~~~~~~~~~\n";
-        break; 
-      }
-      case ACCEPT: {
-        // Passive Open
-        cerr << "\n~~~~~~~~~~~~~~~ACCEPT CASE~~~~~~~~~~~~~~~\n";
-        TCPState state(1, LISTEN, 5);
-        ConnectionToStateMapping<TCPState> CTSM(req.connection, Time(),
-                                                  state, false);
-        clist.push_back(CTSM);
-        // Tell other modules?
-        cerr << "\n~~~~~~~~~~~~~~~END ACCEPT CASE~~~~~~~~~~~~~~~\n";
-        break;
-      }
-      case STATUS: {
-        // Later
-      }
-      case WRITE: {
-        // Later
-      }
-      case FORWARD: {
-        // Later
-      }
-      case CLOSE: {
-        // Later
-      }
-      default: {  
-        break;
-      }
-    }
+  switch (req.type) {
+    case CONNECT:
+      // Active Open
+    case ACCEPT:
+      // Passive Open
+    case STATUS:
+    case WRITE:
+    case FORWARD:
+    case CLOSE:
+    default:  
+      ;
   }
-  else {
-    // Found an existing connection This is for later
-  }
-}
-
-void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
-                   TYPE HeaderType, int size, bool isTimeout) {
-  cerr << "\n~~~~~~~~~~~~~~~MAKING PACKET~~~~~~~~~~~~~~~\n";
-  unsigned char flags = 0;
-  int packetsize = size + TCP_HEADER_BASE_LENGTH + IP_HEADER_BASE_LENGTH;
-  IPHeader ipheader;
-  TCPHeader tcpheader;
-
-  ipheader.SetSourceIP(CTSM.connection.src);
-  ipheader.SetDestIP(CTSM.connection.dest);
-  ipheader.SetTotalLength(packetsize);
-  ipheader.SetProtocol(IP_PROTO_TCP);
-  p.PushFrontHeader(ipheader);
-  cerr << "\nIP Header: \n" << ipheader << endl;
- 
-  tcpheader.SetSourcePort(CTSM.connection.srcport, p);
-  tcpheader.SetDestPort(CTSM.connection.destport, p);
-  tcpheader.SetHeaderLen(TCP_HEADER_BASE_LENGTH, p);
-  tcpheader.SetAckNum(CTSM.state.GetLastRecvd(), p);
-  tcpheader.SetWinSize(CTSM.state.GetRwnd(), p);
-  tcpheader.SetUrgentPtr(0, p);
-  switch (HeaderType) {
-    case SYN: {
-      SET_SYN(flags);
-      cerr << "\nSetting SYN Flags\n";
-      break;
-    }
-    case ACK: {
-      SET_ACK(flags);
-      cerr << "\nSetting ACK Flags\n";
-      break;
-    }
-    case SYNACK: {
-      SET_SYN(flags);
-      SET_ACK(flags);
-      cerr << "\n Setting SYN and ACK Flags\n";
-      break;
-    }
-    default: {
-      break;
-    }
-  }
-  tcpheader.SetFlags(flags, p);
-  cerr << "\nTCP Header: \n" << tcpheader << endl;
-  // Time out stuff changing the Seq\ACK?
-  tcpheader.RecomputeChecksum(p);
-  p.PushBackHeader(tcpheader);
-  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
 }
