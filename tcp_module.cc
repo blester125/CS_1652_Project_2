@@ -228,6 +228,5 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   // Time out stuff changing the Seq\ACK?
   tcpheader.RecomputeChecksum(p);
   p.PushBackHeader(tcpheader);
-  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n";
-  p.Print(cerr); 
+  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
 }
