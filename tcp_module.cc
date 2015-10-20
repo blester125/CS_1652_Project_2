@@ -72,8 +72,8 @@ int main(int argc, char * argv[]) {
     MinetSendToMonitor(MinetMonitoringEvent("Can't accept from sock_module"));
     return -1;
   }
-  cerr << "tcp_module STUB VERSION handling tcp traffic.......\n";
-  MinetSendToMonitor(MinetMonitoringEvent("tcp_module STUB VERSION handling tcp traffic........"));
+  cerr << "tcp_module Part A VERSION handling tcp traffic.......\n";
+  MinetSendToMonitor(MinetMonitoringEvent("tcp_module Part A VERSION handling tcp traffic........"));
 
   MinetEvent event;
   double timeout = 1;
@@ -104,7 +104,7 @@ int main(int argc, char * argv[]) {
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                 ConnectionList<TCPState> &clist) {
-  cerr << "~~~~~~~~~~~~~~~~~~~STARTING HANDLE PACKET~~~~~~~~~~~~~~~~";
+  cerr << "\n~~~~~~~~~~~~~~~STARTING HANDLE PACKET~~~~~~~~~~~~~~~\n";
   Packet p;
   MinetReceive(mux, p);
   unsigned short len;
@@ -130,23 +130,60 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
                    ConnectionList<TCPState> &clist) {
   SockRequestResponse req;
   MinetReceive(sock, req);
-  switch (req.type) {
-    case CONNECT:
-      // Active Open
-    case ACCEPT:
-      // Passive Open
-    case STATUS:
-    case WRITE:
-    case FORWARD:
-    case CLOSE:
-    default:  
-      ;
+  Packet p;
+  ConnectionList<TCPState>::iterator iter = clist.FindMatching(req.connection);
+  if (iter == clist.end()) {
+    cerr << "\nUnable to find the connection in the list.\n";
+    switch (req.type) {
+      case CONNECT: {
+        // Active Open
+        cerr << "\n~~~~~~~~~~~~~~~CONNECT CASE~~~~~~~~~~~~~~~\n";
+        TCPState state(1, SYN_SENT, 5);
+        ConnectionToStateMapping<TCPState> CTSM(req.connection, 
+                                                  Time(), state, false);
+        clist.push_back(CTSM);
+        make_packet(p, CTSM, SYN, 0, false);
+        MinetSend(mux, p);
+        // Tell other modules?
+        cerr << "\n~~~~~~~~~~~~~~~End CONNECT CASE~~~~~~~~~~~~~~~\n";
+        break; 
+      }
+      case ACCEPT: {
+        // Passive Open
+        cerr << "\n~~~~~~~~~~~~~~~ACCEPT CASE~~~~~~~~~~~~~~~\n";
+        TCPState state(1, LISTEN, 5);
+        ConnectionToStateMapping<TCPState> CTSM(req.connection, Time(),
+                                                  state, false);
+        clist.push_back(CTSM);
+        // Tell other modules?
+        cerr << "\n~~~~~~~~~~~~~~~END ACCEPT CASE~~~~~~~~~~~~~~~\n";
+        break;
+      }
+      case STATUS: {
+        // Later
+      }
+      case WRITE: {
+        // Later
+      }
+      case FORWARD: {
+        // Later
+      }
+      case CLOSE: {
+        // Later
+      }
+      default: {  
+        break;
+      }
+    }
+  }
+  else {
+    // Found an existing connection This is for later
   }
 }
 
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
                    TYPE HeaderType, int size, bool isTimeout) {
-  cerr << "\n~~~~~~~~~~~~~~~~~MAKING PACKET~~~~~~~~~~~~~~~~~~\n";
+  cerr << "\n~~~~~~~~~~~~~~~MAKING PACKET~~~~~~~~~~~~~~~\n";
   unsigned char flags = 0;
   int packetsize = size + TCP_HEADER_BASE_LENGTH + IP_HEADER_BASE_LENGTH;
   IPHeader ipheader;
@@ -166,27 +203,31 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   tcpheader.SetWinSize(CTSM.state.GetRwnd(), p);
   tcpheader.SetUrgentPtr(0, p);
   switch (HeaderType) {
-    case SYN:
+    case SYN: {
       SET_SYN(flags);
       cerr << "\nSetting SYN Flags\n";
       break;
-    case ACK:
+    }
+    case ACK: {
       SET_ACK(flags);
       cerr << "\nSetting ACK Flags\n";
       break;
-    case SYNACK:
+    }
+    case SYNACK: {
       SET_SYN(flags);
       SET_ACK(flags);
       cerr << "\n Setting SYN and ACK Flags\n";
       break;
-    default:
+    }
+    default: {
       break;
+    }
   }
   tcpheader.SetFlags(flags, p);
   cerr << "\nTCP Header: \n" << tcpheader << endl;
   // Time out stuff changing the Seq\ACK?
   tcpheader.RecomputeChecksum(p);
   p.PushBackHeader(tcpheader);
-  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~\n";
+  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n";
   p.Print(cerr); 
 }
