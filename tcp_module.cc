@@ -20,13 +20,23 @@
 
 #include "Minet.h"
 #include "tcpstate.h"
+#include "tcp.h"
+#include "ip.h"
 
 using namespace std;
+
+enum TYPE {
+  SYN,
+  SYNACK,
+  ACK
+};
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist);
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
-                     ConnectionList<TCPState> &clist);
+                   ConnectionList<TCPState> &clist);
+void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
+                   TYPE HeaderType, int size, bool isTimeout);
 
 //struct TCPState {
     // need to write this
@@ -94,9 +104,9 @@ int main(int argc, char * argv[]) {
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist) {
+  cerr << "~~~~~~~~~~~~~~~~~~~STARTING HANDLE PACKET~~~~~~~~~~~~~~~~";
   Packet p;
   MinetReceive(mux, p);
-  p.Print(cerr);
   unsigned short len;
   len = TCPHeader::EstimateTCPHeaderLength(p);
   p.ExtractHeaderFromPayload<TCPHeader>(len);
@@ -122,4 +132,50 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
     default:  
       ;
   }
+}
+
+void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
+                   TYPE HeaderType, int size, bool isTimeout) {
+  cerr << "\n~~~~~~~~~~~~~~~~~MAKING PACKET~~~~~~~~~~~~~~~~~~\n";
+  unsigned char flags = 0;
+  int packetsize = size + TCP_HEADER_BASE_LENGTH + IP_HEADER_BASE_LENGTH;
+  IPHeader ipheader;
+  TCPHeader tcpheader;
+
+  ipheader.SetSourceIP(CTSM.connection.src);
+  ipheader.SetDestIP(CTSM.connection.dest);
+  ipheader.SetTotalLength(packetsize);
+  ipheader.SetProtocol(IP_PROTO_TCP);
+  p.PushFrontHeader(ipheader);
+  cerr << "\nIP Header: \n" << ipheader << endl;
+ 
+  tcpheader.SetSourcePort(CTSM.connection.srcport, p);
+  tcpheader.SetDestPort(CTSM.connection.destport, p);
+  tcpheader.SetHeaderLen(TCP_HEADER_BASE_LENGTH, p);
+  tcpheader.SetAckNum(CTSM.state.GetLastRecvd(), p);
+  tcpheader.SetWinSize(CTSM.state.GetRwnd(), p);
+  tcpheader.SetUrgentPtr(0, p);
+  switch (HeaderType) {
+    case SYN:
+      SET_SYN(flags);
+      cerr << "\nSetting SYN Flags\n";
+      break;
+    case ACK:
+      SET_ACK(flags);
+      cerr << "\nSetting ACK Flags\n";
+      break;
+    case SYNACK:
+      SET_SYN(flags);
+      SET_ACK(flags);
+      cerr << "\n Setting SYN and ACK Flags\n";
+      break;
+    default:
+      break;
+  }
+  tcpheader.SetFlags(flags, p);
+  cerr << "\nTCP Header: \n" << tcpheader << endl;
+  // Time out stuff changing the Seq\ACK?
+  tcpheader.RecomputeChecksum(p);
+  p.PushBackHeader(tcpheader);
+  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~\n"; 
 }
