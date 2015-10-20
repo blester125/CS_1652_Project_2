@@ -103,7 +103,7 @@ int main(int argc, char * argv[]) {
 }
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
-                     ConnectionList<TCPState> &clist) {
+                ConnectionList<TCPState> &clist) {
   cerr << "~~~~~~~~~~~~~~~~~~~STARTING HANDLE PACKET~~~~~~~~~~~~~~~~";
   Packet p;
   MinetReceive(mux, p);
@@ -114,6 +114,16 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   tcph = p.FindHeader(Headers::TCPHeader);
   IPHeader iph;
   iph = p.FindHeader(Headers::IPHeader);
+  //Testing Make Packet
+  /*
+  Connection conn;
+  conn.src = "192.168.1.1";
+  conn.dest = "192.169.122.1";
+  conn.destport = 5050;
+  conn.srcport = 5050;
+  ConnectionToStateMapping<TCPState> CTSM(conn, Time(0.0), TCPState(), false);
+  make_packet(p, CTSM, SYN, 0, false);
+  */
 }
 
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
@@ -177,5 +187,6 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   // Time out stuff changing the Seq\ACK?
   tcpheader.RecomputeChecksum(p);
   p.PushBackHeader(tcpheader);
-  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~\n"; 
+  cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~\n";
+  p.Print(cerr); 
 }
