@@ -221,7 +221,11 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           list_search->state.last_sent = list_search->state.last_sent + 1;
 
           make_packet(p_send, *list_search, SYNACK, 0, false);
-
+          cerr << "\n~~~~~~~~~~~~~~~SENDING PACKET~~~~~~~~~~~~~~~~\n";
+          cerr << p_send << endl;
+          cerr << "\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+          MinetSend(mux, p_send);
+          sleep(2);
           MinetSend(mux, p_send);
         }
         cerr << "\n -----------END LISTEN-----------\n";
@@ -303,6 +307,8 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         clist.push_back(CTSM);
         make_packet(p, CTSM, SYN, 0, false);
         MinetSend(mux, p);
+        sleep(2);
+        MinetSend(mux, p);
          
         repl.type = STATUS;
         repl.connection = req.connection;
@@ -367,10 +373,10 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
  
   tcpheader.SetSourcePort(CTSM.connection.srcport, p);
   tcpheader.SetDestPort(CTSM.connection.destport, p);
-  tcpheader.SetHeaderLen(TCP_HEADER_BASE_LENGTH, p);
+  tcpheader.SetHeaderLen(5, p);
   tcpheader.SetAckNum(CTSM.state.GetLastRecvd(), p);
-  //Set SEQNUMBER
-  tcpheader.SetWinSize(CTSM.state.GetRwnd(), p);
+
+  tcpheader.SetWinSize(CTSM.state.GetN(), p);
   tcpheader.SetUrgentPtr(0, p);
   switch (HeaderType) {
     case SYN: {
@@ -396,6 +402,7 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   tcpheader.SetFlags(flags, p);
   cerr << "\nTCP Header: \n" << tcpheader << endl;
   // Time out stuff changing the Seq\ACK?
+  tcpheader.SetSeqNum(CTSM.state.GetLastAcked() + 1, p);
   tcpheader.RecomputeChecksum(p);
   p.PushBackHeader(tcpheader);
   cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
