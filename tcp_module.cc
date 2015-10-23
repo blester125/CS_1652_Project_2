@@ -25,6 +25,8 @@
 
 using namespace std;
 
+#define TCP_HEADER_BASE_LENGTH_IN_WORDS 5
+
 enum TYPE {
   SYN,
   SYNACK,
@@ -373,7 +375,7 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
  
   tcpheader.SetSourcePort(CTSM.connection.srcport, p);
   tcpheader.SetDestPort(CTSM.connection.destport, p);
-  tcpheader.SetHeaderLen(5, p);
+  tcpheader.SetHeaderLen(TCP_HEADER_BASE_LENGTH_IN_WORDS, p);
   tcpheader.SetAckNum(CTSM.state.GetLastRecvd(), p);
 
   tcpheader.SetWinSize(CTSM.state.GetN(), p);
@@ -402,7 +404,7 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   tcpheader.SetFlags(flags, p);
   cerr << "\nTCP Header: \n" << tcpheader << endl;
   // Time out stuff changing the Seq\ACK?
-  tcpheader.SetSeqNum(CTSM.state.GetLastAcked() + 1, p);
+  tcpheader.SetSeqNum(CTSM.state.GetLastSent() + 1, p);
   tcpheader.RecomputeChecksum(p);
   p.PushBackHeader(tcpheader);
   cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 

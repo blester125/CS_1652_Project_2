@@ -1,0 +1,15 @@
+Check The seqnums that are supposed to be used in 3 way handshake as client
+
+fix the sequence nums
+
+Clean the prints
+
+reorder so the original connection state is shown, then packet stuff then new
+connection state etc,
+
+Comment code
+
+comment enum
+
+make 
+#define TCP_HEADER_BASE_LENGTH_IN_WORDS 5
