@@ -1,8 +1,7 @@
-// You will build this in project part B - this is merely a
-// stub that does nothing but integrate into the stack
-
-// For project parts A and B, an appropriate binary will be 
-// copied over as part of the build process
+// CS 1652 Data Communications and Computer Networking
+// University of Pittsburgh
+// Brian Lester bdl20@pitt.edu
+// Carmen Condeluci crc73@pitt.edu
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -27,26 +26,73 @@ using namespace std;
 
 #define TCP_HEADER_BASE_LENGTH_IN_WORDS 5
 
+// The type of packet that will be sent (What flags are set).
+// SYN - initating a TCP connection.
+// SYNACK - responding to a TCP SYN Packet.
+// ACK - Acknowledging a packet was recived.
 enum TYPE {
   SYN,
   SYNACK,
   ACK
 };
 
+/* void handle_packet
+ * Arguments:
+ *   MinetHandle &mux: The minet mux that the minet Event 
+ *   MinetHandle &sock: The minet socket from the minet Event
+ *   ConnectionList<TCPState> &clist: Global list of all connections
+ *
+ * Returns: 
+ *   void
+ *
+ * Use:
+ *   Handle an incoming IP Packet that is pulled from the MinetEvent mux
+ *   It extracts IP Header, TCP Header, Finds or Creates a Connection 
+ *   based on the 4-tuple and acts on it.  
+ */
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist);
+
+/* void handle_sock
+ * Arguments:
+ *   MinetHandle &mux: The minet mux that the minet Event 
+ *   MinetHandle &sock: The minet socket from the minet Event
+ *   ConnectionList<TCPState> &clist: Global list of all connections
+ *
+ * Returns: 
+ *   void
+ *
+ * Use:
+ *   Handle an incoming Socket request from the MinetEvent sock
+ *   It finds or Creates a Connection based on the request's 
+ *   4-tuple and acts on it.  
+ */
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
                    ConnectionList<TCPState> &clist);
+
+/* void make_packet
+ * Arguments:
+ *   Packet &p: The packet object that will have the headers added to it
+ *   ConnectionToSateMapping<TCPState> &CTSM: The connection that the 
+ *     packet is for with information that will be added to the Headers,
+ *   TYPE HeaderType: The type of packet that decides what the flags 
+ *     will be.
+ *   int size: The size of the data that will be sent.
+ *   bool isTimeOut: Is this packet a timeout? If so it will change 
+ *     the sequence numbers.
+ *
+ * Returns:
+ *   void
+ *
+ * Output:
+ *   Packet &p: The packet passed in will now include the IP and TCP 
+ *     headers needed for the connection the packet is for.
+ *
+ * Use: 
+ *   Creating the headers for a new packet that will be sent out.
+ */
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
                    TYPE HeaderType, int size, bool isTimeout);
-
-//struct TCPState {
-    // need to write this
-  //  std::ostream & Print(std::ostream &os) const { 
-    //  os << "TCPState()" ; 
-      //return os;
-    //}
-//};
 
 int main(int argc, char * argv[]) {
   MinetHandle mux;
@@ -70,36 +116,40 @@ int main(int argc, char * argv[]) {
   }
 
   if ((sock == MINET_NOHANDLE) && 
-    (MinetIsModuleInConfig(MINET_SOCK_MODULE))) {
-    MinetSendToMonitor(MinetMonitoringEvent("Can't accept from sock_module"));
-    return -1;
+       (MinetIsModuleInConfig(MINET_SOCK_MODULE))) {
+     
+     MinetSendToMonitor(
+       MinetMonitoringEvent("Can't accept from sock_module"));
+     return -1;
   }
-  cerr << "tcp_module Part A VERSION handling tcp traffic.......\n";
-  MinetSendToMonitor(MinetMonitoringEvent("tcp_module Part A VERSION handling tcp traffic........"));
+
+  cerr << "tcp_module Part A handling tcp traffic.......\n";
+  MinetSendToMonitor(
+    MinetMonitoringEvent(
+      "tcp_module Part A VERSION handling tcp traffic........"));
 
   MinetEvent event;
   double timeout = 1;
-  cerr << "BUTTS\n";
-
+ 
   while (MinetGetNextEvent(event, timeout) == 0) {
     if ((event.eventtype == MinetEvent::Dataflow) && 
        (event.direction == MinetEvent::IN)) {
-       cerr << "\n~~~~~~~~~~~~~~MINET EVENT ARRIVES~~~~~~~~~~~~\n";
-	    if (event.handle == mux) {
+       
+      cerr << "\n~~~~~~~~~~~~~~MINET EVENT ARRIVES~~~~~~~~~~~~\n";
+      if (event.handle == mux) {
         // ip packet has arrived!
         handle_packet(mux, sock, clist);
-	    }
+      }
 
       if (event.handle == sock) {
-        // socket request or response has arrived
-        MinetSendToMonitor(MinetMonitoringEvent("tcp_module socket req or resp"));
+        // socket request or response has arrived  
         cerr << "tcp_module socket req or resp arrived\n";
         handle_sock(mux, sock, clist);
-	    }
-	}
+      }
+    }
 
     if (event.eventtype == MinetEvent::Timeout) {
-	   // timeout ! probably need to resend some packets
+      // timeout ! probably need to resend some packets
     }
   }
 
@@ -110,7 +160,7 @@ int main(int argc, char * argv[]) {
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist) {
   //announce mux processing start
-  cerr << "\n -----------handle_packet start-----------\n";
+  cerr << "\n---------------handle_packet start---------------\n";
 
   //Receive packet from Minet
   Packet p;
@@ -127,9 +177,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 
   //cerr headers
   cerr << "IP Header: \n" << iph << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
   cerr << "TCP Header: \n" << tcph << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
 
   //examine checksum
   bool checksum = tcph.IsCorrectChecksum(p);
@@ -147,7 +197,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   tcph.GetDestPort(conn.srcport);
   iph.GetProtocol(conn.protocol);
   cerr << "Connection Rcvd: \n" << conn << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
 
   //Get information from packet via headers
   unsigned char flag;
@@ -176,12 +226,12 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   cerr << "TCP Header Size: " << static_cast<unsigned>(tcph_size) << endl;
   cerr << "IP Header Size: " << static_cast<unsigned>(iph_size) << endl;
   cerr << "Content Size: " << content_size << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
 
   content_size = content_size - tcph_size - iph_size;
 
   cerr << "Packet Content Size: \n" << content_size << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
 
   //Get packet content
   Buffer content;
@@ -199,14 +249,14 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   curr_state = list_search->state.GetState();
 
   cerr << "Current State: " << curr_state << endl;
-  cerr << "----\n";
+  cerr << "---------------\n";
 
   Packet p_send;
 
   switch(curr_state){
 
     case LISTEN:
-        cerr << "\n -----------LISTEN-----------\n";
+        cerr << "\n---------------LISTEN---------------\n";
         if( IS_SYN(flag) ){
 
           //update data
@@ -224,17 +274,15 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 
           make_packet(p_send, *list_search, SYNACK, 0, false);
           cerr << "\n~~~~~~~~~~~~~~~SENDING PACKET~~~~~~~~~~~~~~~~\n";
-          cerr << p_send << endl;
-          cerr << "\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
           MinetSend(mux, p_send);
           sleep(2);
           MinetSend(mux, p_send);
         }
-        cerr << "\n -----------END LISTEN-----------\n";
+        cerr << "\n---------------END LISTEN---------------\n";
         break;
 
     case SYN_RCVD:
-        cerr << "\n -----------SYN_RCVD-----------\n";
+        cerr << "\n---------------SYN_RCVD---------------\n";
         if (IS_ACK(flag)) {
           list_search->state.SetState(ESTABLISHED);
           list_search->state.SetLastAcked(ack);
@@ -251,11 +299,11 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           delete write;
 
           cerr << "\n Connection Established. \n";
-          cerr << "\n -----------END SYN_RCVD-----------\n";
+          cerr << "\n---------------END SYN_RCVD---------------\n";
         }
         break;
     case SYN_SENT:
-        cerr << "\n -----------SYN_SENT-----------\n";
+        cerr << "\n---------------SYN_SENT---------------\n";
 
         if( (IS_SYN(flag) && IS_ACK(flag)) ){
 
@@ -274,11 +322,12 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           //for timeout
           list_search->bTmrActive = false;
 
-          SockRequestResponse write (WRITE, list_search->connection, content, 0, EOK);
+          SockRequestResponse write (WRITE, 
+            list_search->connection, content, 0, EOK);
           MinetSend(sock, write);
 
         }
-      cerr << "\n -----------END SYN_RCVD-----------\n";
+      cerr << "\n---------------END SYN_RCVD---------------\n";
       break;
   }
 
@@ -286,7 +335,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 
 
   //show end of this packet processing
-  cerr << "\n -----------handle_packet end-----------\n";
+  cerr << "\n---------------handle_packet end---------------\n";
 }
 
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
@@ -294,24 +343,35 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
   cerr << "\n~~~~~~~~~~~~~~~HANDLE SOCKET REQUEST~~~~~~~~~~~~~~~\n";
   SockRequestResponse req;
   SockRequestResponse repl;
+  // Recive Connection info from socket
   MinetReceive(sock, req);
   Packet p;
-  ConnectionList<TCPState>::iterator iter = clist.FindMatching(req.connection);
+  // Find the connection in the golbal list
+  ConnectionList<TCPState>::iterator iter;
+  iter = clist.FindMatching(req.connection);
   if (iter == clist.end()) {
     cerr << "\nUnable to find the connection in the list.\n";
+    // Need to create a new connection
     switch (req.type) {
       case CONNECT: {
         // Active Open
         cerr << "\n~~~~~~~~~~~~~~~CONNECT CASE~~~~~~~~~~~~~~~\n";
+        // Create the state in SYN_SENT. ISN is currently 1 should 
+        // be changed to rand()
         TCPState state(1, SYN_SENT, 5);
+        // Create a Connection State Mapping and add it to the list.
         ConnectionToStateMapping<TCPState> CTSM(req.connection, 
                                                   Time()+2, state, true);
         clist.push_back(CTSM);
+        // Make the packet
         make_packet(p, CTSM, SYN, 0, false);
+        // Send the packet (twice in case there is not ARP entry and Minet
+        // drops the packet
         MinetSend(mux, p);
         sleep(2);
         MinetSend(mux, p);
          
+        // Tell the socket that you sent the data
         repl.type = STATUS;
         repl.connection = req.connection;
         repl.bytes = 0;
@@ -323,10 +383,13 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
       case ACCEPT: {
         // Passive Open
         cerr << "\n~~~~~~~~~~~~~~~ACCEPT CASE~~~~~~~~~~~~~~~\n";
+        // Create the state in LISTEN mode. ISN() should ne set to rand()?
         TCPState state(1, LISTEN, 5);
+        // Create a connection State Mapping and add it to the list.
         ConnectionToStateMapping<TCPState> CTSM(req.connection, Time(),
                                                   state, false);
         clist.push_back(CTSM);
+        // Tell the socket that you set up the connection.
         repl.type = STATUS;
         repl.bytes = 0;
         repl.connection = req.connection;
@@ -366,20 +429,25 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   IPHeader ipheader;
   TCPHeader tcpheader;
 
+  // Set the IP Header Data
   ipheader.SetSourceIP(CTSM.connection.src);
   ipheader.SetDestIP(CTSM.connection.dest);
   ipheader.SetTotalLength(packetsize);
   ipheader.SetProtocol(IP_PROTO_TCP);
+  // Add IP header to Packet
   p.PushFrontHeader(ipheader);
   cerr << "\nIP Header: \n" << ipheader << endl;
  
+  // Set the TCP Header Data
   tcpheader.SetSourcePort(CTSM.connection.srcport, p);
   tcpheader.SetDestPort(CTSM.connection.destport, p);
   tcpheader.SetHeaderLen(TCP_HEADER_BASE_LENGTH_IN_WORDS, p);
+  // Acknum is LastRecvd because lastRecved is set to seqnum + 1
   tcpheader.SetAckNum(CTSM.state.GetLastRecvd(), p);
-
   tcpheader.SetWinSize(CTSM.state.GetN(), p);
   tcpheader.SetUrgentPtr(0, p);
+  
+  // Set the flags
   switch (HeaderType) {
     case SYN: {
       SET_SYN(flags);
@@ -402,10 +470,14 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
     }
   }
   tcpheader.SetFlags(flags, p);
-  cerr << "\nTCP Header: \n" << tcpheader << endl;
+
   // Time out stuff changing the Seq\ACK?
+  // If it is a time out I want the Seqnum to be the last thing Ack'd
   tcpheader.SetSeqNum(CTSM.state.GetLastSent() + 1, p);
   tcpheader.RecomputeChecksum(p);
+  
+  cerr << "\nTCP Header: \n" << tcpheader << endl;
+  // Add TCP header behind IP header
   p.PushBackHeader(tcpheader);
   cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
 }
