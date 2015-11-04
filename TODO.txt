@@ -3,7 +3,4 @@ Clean the prints
 reorder so the original connection state is shown, then packet stuff then new
 connection state etc,
 
-Comment code
-
-comment enum
-
+Read pg 617 of TCP IP Illustrated Volume I

@@ -4,9 +4,9 @@ vncserver -nolisten tcp -geometry 1200x700
 
 vncserver -kill :displaynum
 
-vncviewer netlab-8.cs.pitt.edu
+vncviewer netlab-8.cs.pitt.edu:displaynum
 
-minet IP - 192.168.122.1
+minet IP - 192.168.122.2
 
 // Copy tcp_module.cc **TO** netlab from thinkpad
 scp tcp_module.cc bdl20@netlab-8.cs.pitt.edu:/opt/bdl20/minet/src/modules/
