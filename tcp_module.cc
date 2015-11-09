@@ -237,7 +237,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   cerr << "Content Size: " << content_size << endl;
   cerr << "---------------\n";
 
-  content_size = content_size - tcph_size - iph_size;
+  content_size = content_size - (tcph_size*4) - (iph_size*4);
 
   cerr << "Packet Content Size: \n" << content_size << endl;
   cerr << "---------------\n";
@@ -362,7 +362,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n------------ END PUSH ACK ------------\n";
       } 
       else if (IS_FIN(flag) && IS_ACK(flag)) {
-        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n"; 
+        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
+        //make_packet(p, *list_search, FIN, 0, false);
+        //MinetSend(mux, p); 
       }
       else if (IS_ACK(flag)) {
         list_search->state.SetLastRecvd((unsigned int)seqnum);
