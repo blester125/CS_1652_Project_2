@@ -4,3 +4,33 @@ reorder so the original connection state is shown, then packet stuff then new
 connection state etc,
 
 Read pg 617 of TCP IP Illustrated Volume I
+
+*******************************************
+
+Error if message is least than 5 letters long
+
+
+enum eState { 
+  CLOSED      = 0,
+  LISTEN      = 1,
+  SYN_RCVD    = 2,
+  SYN_SENT    = 3,
+  SYN_SENT1   = 4,
+  ESTABLISHED = 5,
+  SEND_DATA   = 6,
+  CLOSE_WAIT  = 7,
+  FIN_WAIT1   = 8,
+  CLOSING     = 9,
+  LAST_ACK    = 10,
+  FIN_WAIT2   = 11,
+  TIME_WAIT   = 12 
+};
+
+enum srrType {
+  CONNECT=0, 
+  ACCEPT=1, 
+  WRITE=2,
+  FORWARD=3,
+  CLOSE=4,
+  STATUS=5
+};

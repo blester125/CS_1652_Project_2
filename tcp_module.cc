@@ -34,7 +34,10 @@ enum TYPE {
   SYN,
   SYNACK,
   ACK,
-  PSHACK
+  PSHACK,
+  FIN,
+  FINACK,
+  RESET
 };
 
 /* void handle_packet
@@ -349,16 +352,30 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
                                    list_search->state.RecvBuffer.GetSize(), 
                                    EOK);
         MinetSend(sock, write);
+        // Remove the data from the recvbuffer once passed up.
+        cerr << "\n~Sent up Data:\n" << list_search->state.RecvBuffer;
+        list_search->state.RecvBuffer.Clear();
 
         //Send ACK
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
         cerr << "\n------------ END PUSH ACK ------------\n";
-    }  
+      } 
+      else if (IS_FIN(flag) && IS_ACK(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n"; 
+      }
+      else if (IS_ACK(flag)) {
+        list_search->state.SetLastRecvd((unsigned int)seqnum);
+        list_search->state.last_acked = ack;
+      }
+      else {
+        cerr << "\nUnknown Packet\n";
+      }
+    break;  
   }
 
-
-
+  cerr << "\nNew State:\n";
+  cerr << list_search->state.GetState();
 
   //show end of this packet processing
   cerr << "\n---------------handle_packet end---------------\n";
@@ -431,16 +448,30 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         break;
       }
       case STATUS: {
-        // Later
+        // No action needed.
+        break;
       }
       case WRITE: {
-        // Later
+        // Can't Write to a connection that doesn't exist.
+        repl.type = STATUS;
+        repl.connection = req.connection;
+        repl.bytes = 0;
+        repl.error = ENOMATCH;
+        MinetSend(sock, repl);
+        break;
       }
       case FORWARD: {
-        // Later
+        // No Action needed.
+        break;
       }
       case CLOSE: {
-        // Later
+        // Can't close a connection that doesn't exist.
+        repl.type = STATUS;
+        repl.connection = req.connection;
+        repl.bytes = 0;
+        repl.error = ENOMATCH;
+        MinetSend(sock, repl);
+        break;
       }
       default: {  
         break;
@@ -455,6 +486,10 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
     Buffer buf;
     switch (req.type) {
       case CONNECT: {
+        break;
+      }
+      case ACCEPT: {
+        // Allow a new Accept on a an old connection?
         break;
       }
       case WRITE: {
@@ -484,10 +519,36 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n~~~~~~~~~~~~End Write CASE~~~~~~~~~~~~\n";
         break;   
       }
+      case FORWARD: {
+        // Later
+        break;
+      }
+      case CLOSE: {
+        cerr << "\n~~~~~~~~~~~~START Close CASE~~~~~~~~~~~~\n";
+        if (state == ESTABLISHED) {
+          iter->state.SetState(FIN_WAIT1);
+          iter->state.last_acked = iter->state.last_acked + 1;
+          make_packet(p, *iter, FINACK, 0, false);
+          MinetSend(mux, p);
+         
+          repl.type = STATUS;
+          repl.connection = req.connection;
+          repl.bytes = 0;
+          repl.error = EOK;
+          MinetSend(sock, repl);
+        }
+        cerr << "\n~~~~~~~~~~~~END Close CASE~~~~~~~~~~~~\n";
+        break;
+      }
+      case STATUS: {
+        // Return Status of connection
+        break;
+      }
       default:
         break;
     }
   }
+  cerr << "\n~~~~~~~~~~~~~~~END Handle Socket~~~~~~~~~~~~~~~\n";
 }
 
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
@@ -537,6 +598,19 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
     case PSHACK: {
       SET_PSH(flags);
       SET_ACK(flags);
+      break;
+    }
+    case FIN: {
+      SET_FIN(flags);
+      break;
+    }
+    case FINACK: {
+      SET_FIN(flags);
+      SET_ACK(flags);
+      break;
+    }
+    case RESET: {
+      SET_RST(flags);
       break;
     }
     default: {
