@@ -367,6 +367,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         //MinetSend(mux, p); 
       }
       else if (IS_ACK(flag)) {
+        // Delete things from the send buffer.
         list_search->state.SetLastRecvd((unsigned int)seqnum);
         list_search->state.last_acked = ack;
       }
@@ -649,4 +650,3 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   cerr << "\n~~~~~~~~~~~~Done Sending Data~~~~~~~~~~~~\n";
   return bytes_left;
 }
-
