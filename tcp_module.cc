@@ -75,7 +75,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
                    ConnectionList<TCPState> &clist);
 
-void handle_timeout(MinetHandle &mux, ConnectionList<TCPState>::iterator iter, 
+void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator iter, 
                       ConnectionList<TCPState> &clist); 
 
 /* void make_packet
@@ -162,9 +162,10 @@ int main(int argc, char * argv[]) {
     if (event.eventtype == MinetEvent::Timeout) {
       // timeout ! probably need to resend some packets
       ConnectionList<TCPState>::iterator iter = clist.FindEarliest();
-      if (cs != clist.end()) {
+      if (iter != clist.end()) {
         if (Time().operator > ((*iter).timeout)) {
           handle_timeout(mux, iter, clist);
+        }
       }
     }
   }
@@ -286,16 +287,14 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           list_search->state.SetLastRecvd(seqnum + 1);
 
           // for timeout, dont need right now
-          // list_search-->bTmrActive = true;
-          // list_search-->timeout=Time() + 5;
+          list_search->bTmrActive = true;
+          list_search->timeout=Time() + 8;
 
           //synack packet
           list_search->state.last_sent = list_search->state.last_sent + 1;
 
           make_packet(p_send, *list_search, SYNACK, 0, false);
           cerr << "\n~~~~~~~~~~~~~~~SENDING PACKET~~~~~~~~~~~~~~~~\n";
-          MinetSend(mux, p_send);
-          sleep(2);
           MinetSend(mux, p_send);
         }
         cerr << "\n--------------------END LISTEN--------------------\n";
@@ -311,7 +310,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           
           
           //for timeout
-          // list_search-->bTmrActive = false;
+          list_search->bTmrActive = false;
 
           static SockRequestResponse * write = NULL;
           write = new SockRequestResponse(WRITE, list_search->connection, 
@@ -348,7 +347,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           MinetSend(sock, write);
 
         }
-      cerr << "\n--------------------END SYN_RCVD--------------------\n";
+      cerr << "\n--------------------END SYN_SENT--------------------\n";
       break;
     case ESTABLISHED:
       cerr << "\n--------------------ESTABLISHED--------------------\n";
@@ -356,7 +355,10 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
         list_search->state.SetState(CLOSE_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
-        //list_search->state.last_acked = ack;
+        
+  list_search->bTmrActive = true;
+        list_search->timeout=Time() + 8;        
+        
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
         Packet p;
@@ -379,6 +381,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         // Remove the data from the recvbuffer once passed up.
         cerr << "\n~Sent up Data:\n" << list_search->state.RecvBuffer;
         list_search->state.RecvBuffer.Clear();
+
         //Send ACK
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
@@ -388,8 +391,10 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n~~~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
         // If the ack number is larger than last ack it is new
         // otherwise the ack is a duplicate
-        if (ack > list_search->state.last_acked) {
+        if (ack >= list_search->state.last_acked) {
           list_search->state.last_acked = ack;
+
+    list_search->bTmrActive = false; 
         }
         if (list_search->state.GetState() == LAST_ACK) {
           list_search->state.SetState(CLOSED);
@@ -422,6 +427,10 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         list_search->state.SetState(TIME_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
         make_packet(p_send, *list_search, ACK, 0, false);
+
+        list_search->bTmrActive = true;
+        list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
+
         MinetSend(mux, p_send);
       }
       break;
@@ -433,6 +442,10 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         list_search->state.SetState(TIME_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
         make_packet(p_send, *list_search, ACK, 0 ,false);
+
+        list_search->bTmrActive = true;
+        list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
+
         MinetSend(mux, p_send); 
       }
       break;
@@ -478,13 +491,18 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         // Create a Connection State Mapping and add it to the list.
         ConnectionToStateMapping<TCPState> CTSM(req.connection, 
                                                   Time()+2, state, true);
+        CTSM.state.last_acked = 0;
         clist.push_back(CTSM);
         // Make the packet
         make_packet(p, CTSM, SYN, 0, false);
         // Send the packet (twice in case there is not ARP entry and Minet
-        // drops the packet).
-        MinetSend(mux, p);
-        sleep(2);
+        // drops the packet)
+        //
+        // Should be able to remove this double send because of timeouts
+        
+        iter->bTmrActive = true;
+        iter->timeout=Time() + 2;
+        
         MinetSend(mux, p);
          
         // Tell the socket that you sent the data
@@ -576,7 +594,11 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
             repl.error = EBUF_SPACE;
             MinetSend(sock, repl);
           } else {
-            Buffer copy = req.data; 
+            Buffer copy = req.data;
+
+      iter->bTmrActive = true;
+      iter->timeout=Time() + 8;
+ 
             // Send Data
             int return_value = send_data(mux, *iter, copy);  
 
@@ -693,7 +715,9 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   }
   tcpheader.SetFlags(flags, p);
 
-  // Time out stuff changing the Seq\ACK?
+  cerr << "\nLast Acked(): " << CTSM.state.GetLastAcked() << endl;
+  cerr << "\nSeqNim  +  1: " << CTSM.state.GetLastSent() + 1;
+
   if (isTimeout) {
     tcpheader.SetSeqNum(CTSM.state.GetLastAcked(), p);
   }
@@ -726,27 +750,35 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   return bytes_left;
 }
 
-void handle_timeout(MinetHandle &mux, ConnectionList<TCPState>::iterator iter,
-                      ConnectionList<TCPState> clist) {
+void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator iter,
+                      ConnectionList<TCPState> &clist) {
+  cerr << "\nTime Out Occured with a connection in the list\n";
   unsigned int state = iter->state.GetState();
   Packet p;
+  Buffer data;
   switch (state) {
     case SYN_SENT:
+      cerr << "\n FIRST TIMEOUT BECAUSE ARP ENTRY IS GAY AS FUCK\n";
       // Resend SYN
+      make_packet(p, *iter, SYN, 0, false);
+      MinetSend(mux, p);
       break;
-    case SYN_RECVD:
+    case LISTEN:
       // Resend SYNACK
+      make_packet(p, *iter, SYNACK, 0, true);
+      MinetSend(mux, p);
       break;
     case ESTABLISHED:
-      // Go Back N stuff
+      data = iter->state.SendBuffer;
+      send_data(mux, *iter, data);
       break;
     case LAST_ACK:
       // Resend FIN
-      make_packet(p, *iter, FIN, 0, false);
+      make_packet(p, *iter, FIN, 0, true);
       MinetSend(mux, p);
       break;
     case TIME_WAIT:
-      cerr << "~~~~~~~~TIME WAIT ENDED~~~~~~~"
+      cerr << "\n~~~~~~~~TIME WAIT ENDED~~~~~~~\n";
       iter->state.SetState(CLOSED);
       clist.erase(iter);
     default:
