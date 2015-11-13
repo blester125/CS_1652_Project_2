@@ -75,6 +75,20 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
                    ConnectionList<TCPState> &clist);
 
+/* void handle_timeout
+ * Arguements:
+ *   MinetHandle &mux: The minet mux that packets are sent out on
+ *   ConnectionList<TCPState>::iterator iter: A iterator that points to the 
+ *                                            connection that timed out
+ *   ConnectionList<TCOState> &clist: The list of all connection.
+ *
+ * Returns:
+ *   void
+ *
+ * Use:
+ *   Handle a timeout event. It looks that the state of the connection that 
+ *   times out and retransmits packets and adjust state variables as needed. 
+ */
 void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator iter, 
                       ConnectionList<TCPState> &clist); 
 
@@ -86,7 +100,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator i
  *   TYPE HeaderType: The type of packet that decides what the flags 
  *     will be.
  *   int size: The size of the data that will be sent.
- *   bool isTimeOut: Is this packet a timeout? If so it will change 
+ *   bool isTimeout: Is this packet a timeout? If so it will change 
  *     the sequence numbers.
  *
  * Returns:
@@ -102,6 +116,23 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator i
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, 
                    TYPE HeaderType, int size, bool isTimeout);
 
+/* int send_data
+ * Arguments:
+ *   const MinetHandle &mux: The minet mux that packets will be sent out on.
+ *   ConnectionToStateMapping<TCPState> &CTSM: The connection that the packet 
+ *     if for with information that will be added to the Headers.
+ *   TYPE HeaderType: The type if data that will be sent.
+ *   Buffer data: A buffer full of the data that will be sent.
+ *   // TOADD
+ *   boolean isTimeout?
+ *
+ * Returns:
+ *   int: returns the number of bytes send or 0 is error.
+ *
+ * Use:
+ *   Creating and sending packets until all the data in the Buffer has been 
+ *   sent.
+ */
 int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
                 Buffer data);
 
@@ -134,10 +165,10 @@ int main(int argc, char * argv[]) {
      return -1;
   }
 
-  cerr << "tcp_module Part A handling tcp traffic.......\n";
+  cerr << "tcp_module handling tcp traffic using Go Back N.......\n";
   MinetSendToMonitor(
     MinetMonitoringEvent(
-      "tcp_module Part A VERSION handling tcp traffic........"));
+      "tcp_module handling tcp traffic using Go Back N........"));
 
   MinetEvent event;
   double timeout = 1;
@@ -148,21 +179,25 @@ int main(int argc, char * argv[]) {
        
       cerr << "\n!~~~~~~~~~~~~~~MINET EVENT ARRIVES~~~~~~~~~~~~!\n";
       if (event.handle == mux) {
+        cerr << "\ntcp_module mux packet has arrived\n";
         // ip packet has arrived!
         handle_packet(mux, sock, clist);
       }
 
       if (event.handle == sock) {
         // socket request or response has arrived  
-        cerr << "tcp_module socket req or resp arrived\n";
+        cerr << "\ntcp_module socket req or resp arrived\n";
         handle_sock(mux, sock, clist);
       }
     }
 
     if (event.eventtype == MinetEvent::Timeout) {
       // timeout ! probably need to resend some packets
+      // Find the first connection in the list that has timedout
       ConnectionList<TCPState>::iterator iter = clist.FindEarliest();
+      // If you found something
       if (iter != clist.end()) {
+        // If it did time out
         if (Time().operator > ((*iter).timeout)) {
           handle_timeout(mux, iter, clist);
         }
@@ -176,9 +211,6 @@ int main(int argc, char * argv[]) {
 
 void handle_packet(MinetHandle &mux, MinetHandle &sock, 
                      ConnectionList<TCPState> &clist) {
-  // Rewrite the Order so that the prints are easier to understand. 
-
-  //announce mux processing start
   cerr << "\n-----------------------handle_packet start-----------------------\n";
 
   //Receive packet from Minet
@@ -209,6 +241,8 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 
   //get source/dest IPs and Ports, place in new connection
   //account for flipping of source/dest here as well
+  // When receiving a packet we are the dest and they are the src but our
+  // view of the connection has us as the source and them as the dest.
   Connection conn;
   iph.GetSourceIP(conn.dest);
   iph.GetDestIP(conn.src);
@@ -275,10 +309,12 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   Packet p_send;
 
   switch(curr_state){
-
+    // We are a server waiting for someone to connect to us.
     case LISTEN:
         cerr << "\n--------------------LISTEN--------------------\n";
         if( IS_SYN(flag) ){
+          // We received a SYN and must send a SYNACK for the 
+          //three-way handshake
 
           //update data
           list_search->connection = conn;
@@ -286,62 +322,57 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           list_search->state.last_acked = list_search->state.last_sent;
           list_search->state.SetLastRecvd(seqnum + 1);
 
-          // for timeout, dont need right now
+          // Set timeout on our SYNACK
           list_search->bTmrActive = true;
           list_search->timeout=Time() + 8;
 
           //synack packet
           list_search->state.last_sent = list_search->state.last_sent + 1;
-
           make_packet(p_send, *list_search, SYNACK, 0, false);
           cerr << "\n~~~~~~~~~~~~~~~SENDING PACKET~~~~~~~~~~~~~~~~\n";
           MinetSend(mux, p_send);
         }
         cerr << "\n--------------------END LISTEN--------------------\n";
         break;
-
+    // We are a server that sent a SYNACK and is waiting for an ACK
     case SYN_RCVD:
         cerr << "\n--------------------SYN_RCVD--------------------\n";
         if (IS_ACK(flag)) {
+          // We received and ACK and the three way handshake is complete
           list_search->state.SetState(ESTABLISHED);
           list_search->state.SetLastAcked(ack);
           list_search->state.SetSendRwnd(window_size);
           list_search->state.last_sent = list_search->state.last_sent + 1;
           
-          
-          //for timeout
+          // timeout (set for out SYNACK) is turned off because we got an ACK
           list_search->bTmrActive = false;
 
+          // Tell the other modules that the connection was created
           static SockRequestResponse * write = NULL;
           write = new SockRequestResponse(WRITE, list_search->connection, 
                                             content, 0, EOK);
           MinetSend(sock, *write);
           delete write;
-
           cerr << "\n Connection Established. \n";
           cerr << "\n--------------------END SYN_RCVD--------------------\n";
         }
         break;
+    // We are a client and have sent a SYN packet and are waiting for an SYNACK
     case SYN_SENT:
         cerr << "\n--------------------SYN_SENT--------------------\n";
-
         if( (IS_SYN(flag) && IS_ACK(flag)) ){
-
+          // We received a SYNACK and must send an ACK
           list_search->state.SetSendRwnd(window_size);
           list_search->state.SetLastRecvd(seqnum + 1);
           list_search->state.last_acked = ack;
-
           //make ack packet
           list_search->state.last_sent = list_search->state.last_sent + 1;
           make_packet(p_send, *list_search, ACK, 0, false);
-
           MinetSend(mux, p_send);
-
           list_search->state.SetState(ESTABLISHED);
-
-          //for timeout
+          // We received an ACK for our SYN (in the SYNACK) so we turn off the 
+          // timer set by our SYN
           list_search->bTmrActive = false;
-
           SockRequestResponse write (WRITE, 
                                        list_search->connection, content, 0, EOK);
           MinetSend(sock, write);
@@ -349,29 +380,33 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         }
       cerr << "\n--------------------END SYN_SENT--------------------\n";
       break;
+    // The three way handshake is complete.
     case ESTABLISHED:
       cerr << "\n--------------------ESTABLISHED--------------------\n";
       if (IS_FIN(flag)) {
+        // We receive a FIN so we start to close the connection.
         cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
         list_search->state.SetState(CLOSE_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
-        
-  list_search->bTmrActive = true;
+        //Set a timeout for the FIN we are about to send.
+        list_search->bTmrActive = true;
         list_search->timeout=Time() + 8;        
-        
+        // Send an ACK for the FIN we received
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
+        // Send our own FIN and wait until we get an ACK.
         Packet p;
         list_search->state.SetState(LAST_ACK);
         make_packet(p, *list_search, FIN, 0, false); 
         MinetSend(mux, p);
       }
+      // If there is data in the packet.
       if (IS_PSH(flag) || content_size != 0) {
         cerr << "\n------------Received Push------------\n";
         cerr << "\nRecived '" << content << "'\nSize: "<< content.GetSize() << ".\n";
         list_search->state.SetSendRwnd(window_size);
         list_search->state.last_recvd = seqnum + content.GetSize();
-        //list_search->state.last_acked = ack;
+        // pass the data to the socket.
         list_search->state.RecvBuffer.AddBack(content);
         SockRequestResponse write(WRITE, list_search->connection,
                                    list_search->state.RecvBuffer, 
@@ -381,21 +416,24 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         // Remove the data from the recvbuffer once passed up.
         cerr << "\n~Sent up Data:\n" << list_search->state.RecvBuffer;
         list_search->state.RecvBuffer.Clear();
-
         //Send ACK
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
         cerr << "\n------------ END PUSH -------------\n";
       }
+      // If the packet is an ACK
+      // TODO remove data from the sendbuffer once it is ACK's
       if (IS_ACK(flag)) {
         cerr << "\n~~~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
         // If the ack number is larger than last ack it is new
         // otherwise the ack is a duplicate
         if (ack >= list_search->state.last_acked) {
           list_search->state.last_acked = ack;
-
-    list_search->bTmrActive = false; 
+          // Turn off the timer for if there is no data in-flight
+          list_search->bTmrActive = false; 
         }
+        // If we have moved into LAST_ACK from this packet move to CLOSED
+        // This happens when the received packet is a FINACK
         if (list_search->state.GetState() == LAST_ACK) {
           list_search->state.SetState(CLOSED);
           clist.erase(list_search); 
@@ -405,55 +443,62 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         cerr << "\nUnknown Packet\n";
       }
       break;
+    // We received a FIN and sent our own FIN, waiting for an ACK
     case LAST_ACK:
       cerr << "\n~~~~~~~~~~~~~~~~~CASE LAST ACK~~~~~~~~~~~~~~~~~~~\n";
       if (IS_ACK(flag)) {
+        // Got an ACK so we delete ourself from the list of connections
         cerr << "\n~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~\n";
         list_search->state.SetState(CLOSED);
         clist.erase(list_search);
       }
       break;
+    // We sent the initial FIN
     case FIN_WAIT1:
-      // If we sent a FIN
       cerr << "\n~~~~~~~~~~~~~~CASE FIN_WAIT1~~~~~~~~~~~~~~~\n";
       if (IS_ACK(flag)) {
-        // If we recived an ACK
+        // If we received an ACK
         cerr << "\n~~~~~~~~~~~~RECEIVED ACK~~~~~~~~~~~~\n";
         list_search->state.SetState(FIN_WAIT2);
       }
       if (IS_FIN(flag)) {
-        // If we recived a FINACK
+        // If we received a FINACK
         cerr << "\n~~~~~~~~~~~~RECEIVED FINACK~~~~~~~~~~~~\n";
         list_search->state.SetState(TIME_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
         make_packet(p_send, *list_search, ACK, 0, false);
-
+        // Set timeout for our ACK if this times out without receiving a 
+        // new FIN we will close the connection.
         list_search->bTmrActive = true;
         list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
-
         MinetSend(mux, p_send);
       }
       break;
+    // We sent the initial FIN and received an ACK
     case FIN_WAIT2:
-      // If we have sent a syn and recived an ACK
       cerr << "\n~~~~~~~~~~~~~~~CASE FIN_WAIT2~~~~~~~~~~~~~~\n";
       if (IS_FIN(flag)) {
+        // We receive their FIN
         cerr << "\n~~~~~~~~~~~~RECEIVED FIN~~~~~~~~~~~~\n";
         list_search->state.SetState(TIME_WAIT);
         list_search->state.SetLastRecvd(seqnum + 1);
         make_packet(p_send, *list_search, ACK, 0 ,false);
-
+        // TIME_WAIT timeout to close the connection.
         list_search->bTmrActive = true;
         list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
-
         MinetSend(mux, p_send); 
       }
       break;
+    // We sent the initial FIN and received their ACK and their FIN
     case TIME_WAIT:
       cerr << "\n~~~~~~~~~~~~~~~CASE TIME_WAIT~~~~~~~~~~~~~\n";
+      // If we get their FIN again we resend the ACK as it must have been lost.
       if (IS_FIN(flag)) {
         cerr << "\n~~~~~~~~~~~~Received FIN AGAIN~~~~~~~~~~~~\n";
         list_search->state.SetLastRecvd(seqnum + 1);
+        // We got a dup FIN so they didn't get our ACK, send it again and 
+        // reset timer?
+        list_search->timeout = Time() + 5;
         make_packet(p_send, *list_search, ACK, 0 ,false);
         MinetSend(mux, p_send); 
       }
@@ -482,8 +527,8 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
     cerr << "\nUnable to find the connection in the list.\n";
     // Need to create a new connection
     switch (req.type) {
+      // We are a client connecting and need to send a SYN
       case CONNECT: {
-        // Active Open
         cerr << "\n~~~~~~~~~~~~~~~~~~~~CONNECT CASE~~~~~~~~~~~~~~~~~~~~\n";
         // Create the state in SYN_SENT. ISN is currently 1 should 
         // be changed to rand()
@@ -495,11 +540,9 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         clist.push_back(CTSM);
         // Make the packet
         make_packet(p, CTSM, SYN, 0, false);
-        // Send the packet (twice in case there is not ARP entry and Minet
-        // drops the packet)
-        //
-        // Should be able to remove this double send because of timeouts
         
+        // send the packet. The initial drop from Minet (due to no ARP entry) 
+        // is handled via timeout
         iter->bTmrActive = true;
         iter->timeout=Time() + 2;
         
@@ -517,6 +560,7 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n~~~~~~~~~~~~~~~~~~~~End CONNECT CASE~~~~~~~~~~~~~~~~~~~~\n";
         break; 
       }
+      // We are the server and wait to receive a SYN.
       case ACCEPT: {
         // Passive Open
         cerr << "\n~~~~~~~~~~~~~~~~~~~~ACCEPT CASE~~~~~~~~~~~~~~~~~~~~\n";
@@ -583,9 +627,11 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         // Allow a new Accept on a an old connection?
         break;
       }
+      // We received data to send.
       case WRITE: {
         cerr << "\n~~~~~~~~~~~~~~WRITE REQUEST FROM SOCK~~~~~~~~~~~~~~~\n";
         if (state == ESTABLISHED) {
+          // If there is room in the Send buffer
           if (iter->state.SendBuffer.GetSize() + req.data.GetSize() 
              > iter->state.TCP_BUFFER_SIZE) {
             repl.type = STATUS;
@@ -595,13 +641,12 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
             MinetSend(sock, repl);
           } else {
             Buffer copy = req.data;
-
-      iter->bTmrActive = true;
-      iter->timeout=Time() + 8;
- 
+            // Set timer for these sends
+            iter->bTmrActive = true;
+            iter->timeout=Time() + 8;
             // Send Data
             int return_value = send_data(mux, *iter, copy);  
-
+            // If the send was successful tell the socket
             if (return_value == 0) {
               repl.type = STATUS;
               repl.connection = req.connection;
@@ -618,15 +663,19 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         // Later
         break;
       }
+      // We receive a close request from the socket
       case CLOSE: {
         cerr << "\n~~~~~~~~~~~~START Close CASE~~~~~~~~~~~~\n";
         if (state == ESTABLISHED) {
+          // We send a FIN
           iter->state.SetState(FIN_WAIT1);
           iter->state.last_acked = iter->state.last_acked + 1;
-          // Can send a FINACK
+          // Start a timeout for this FIN
+          iter->bTmrActive = true;
+          iter->timeout=Time() + 8;
           make_packet(p, *iter, FIN, 0, false);
           MinetSend(mux, p);
-         
+          // We tell the connection we did it.
           repl.type = STATUS;
           repl.connection = req.connection;
           repl.bytes = 0;
@@ -654,7 +703,6 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   int packetsize = size + TCP_HEADER_BASE_LENGTH + IP_HEADER_BASE_LENGTH;
   IPHeader ipheader;
   TCPHeader tcpheader;
-
   // Set the IP Header Data
   ipheader.SetSourceIP(CTSM.connection.src);
   ipheader.SetDestIP(CTSM.connection.dest);
@@ -677,36 +725,40 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   switch (HeaderType) {
     case SYN: {
       SET_SYN(flags);
-      cerr << "\nSetting SYN Flags\n";
+      cerr << "\n Setting SYN flag \n";
       break;
     }
     case ACK: {
       SET_ACK(flags);
-      cerr << "\nSetting ACK Flags\n";
+      cerr << "\n Setting ACK flag \n";
       break;
     }
     case SYNACK: {
       SET_SYN(flags);
       SET_ACK(flags);
-      cerr << "\n Setting SYN and ACK Flags\n";
+      cerr << "\n Setting SYN and ACK flags\n";
       break;
     }
     case PSHACK: {
       SET_PSH(flags);
       SET_ACK(flags);
+      cerr << "\n Setting PSH and ACK flags\n";
       break;
     }
     case FIN: {
       SET_FIN(flags);
+      cerr << "\n Setting FIN flag \n";
       break;
     }
     case FINACK: {
       SET_FIN(flags);
       SET_ACK(flags);
+      cerr << "\n Setting FIN and ACK flags \n";
       break;
     }
     case RESET: {
       SET_RST(flags);
+      cerr << "\n setting RST flag \n";
       break;
     }
     default: {
@@ -716,8 +768,12 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   tcpheader.SetFlags(flags, p);
 
   cerr << "\nLast Acked(): " << CTSM.state.GetLastAcked() << endl;
-  cerr << "\nSeqNim  +  1: " << CTSM.state.GetLastSent() + 1;
+  cerr << "\nSeqNum  +  1: " << CTSM.state.GetLastSent() + 1;
 
+  // If this is a retransmission the sequence number is the last 
+  // seq number that the other party ACK'd other wise it is the last thing you
+  // sent plus 1
+  // Not 100% about this
   if (isTimeout) {
     tcpheader.SetSeqNum(CTSM.state.GetLastAcked(), p);
   }
@@ -732,18 +788,25 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
 }
 
+// TODO update for retransmissions? maybe just adjust the CTSM before calling
 int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
                  Buffer data) {
   cerr << "\n~~~~~~~~~~~Start Sending Data~~~~~~~~~~\n";
   Packet p;
+  // Add the data to the send buffer
   CTSM.state.SendBuffer.AddBack(data);
   unsigned int bytes_left = data.GetSize();
+  // While you haven't sent everything in the buffer
   while (bytes_left != 0) {
+    // Send either the number of bytes left or the most you can
     unsigned int bytes_to_send = min(bytes_left, TCP_MAXIMUM_SEGMENT_SIZE);
+    // Add the data to the packet
     p = CTSM.state.SendBuffer.Extract(0, bytes_to_send);
+    // Make the packet and send it
     make_packet(p, CTSM, PSHACK, bytes_to_send, false);
     MinetSend(mux, p);
     CTSM.state.last_sent = CTSM.state.last_sent + bytes_to_send;
+    // update the number of bytes left to send.
     bytes_left = bytes_left - bytes_to_send;
   }
   cerr << "\n~~~~~~~~~~~~Done Sending Data~~~~~~~~~~~~\n";
@@ -757,26 +820,35 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator i
   Packet p;
   Buffer data;
   switch (state) {
+    // If the timeout is on the original SYN packet resend it
     case SYN_SENT:
-      cerr << "\n FIRST TIMEOUT BECAUSE ARP ENTRY IS GAY AS FUCK\n";
-      // Resend SYN
+      // isTimeout is false because no ACK as occurred so far so each SYN 
+      // Seq num is just the ISN
       make_packet(p, *iter, SYN, 0, false);
       MinetSend(mux, p);
       break;
-    case LISTEN:
+    // Time out as a server after getting a SYN and sending our SYNACK 
+    case SYN_RCVD:
       // Resend SYNACK
       make_packet(p, *iter, SYNACK, 0, true);
       MinetSend(mux, p);
       break;
+    // Time out on Data that was sent
     case ESTABLISHED:
+      // resend the SendBuffer
       data = iter->state.SendBuffer;
       send_data(mux, *iter, data);
       break;
+    // Timeout after our initial FIN
+    case FIN_WAIT1:
+    // Timeout after our FIN in response to their FIN
     case LAST_ACK:
       // Resend FIN
       make_packet(p, *iter, FIN, 0, true);
       MinetSend(mux, p);
       break;
+    // Timeout after ACKing their response FIN, If this happens we 
+    // Assume they got our ACK and close.
     case TIME_WAIT:
       cerr << "\n~~~~~~~~TIME WAIT ENDED~~~~~~~\n";
       iter->state.SetState(CLOSED);
