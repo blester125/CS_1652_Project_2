@@ -25,6 +25,7 @@
 using namespace std;
 
 #define TCP_HEADER_BASE_LENGTH_IN_WORDS 5
+#define NUM_BYTES_IN_A_WORD 4
 
 // The type of packet that will be sent (What flags are set).
 // SYN - initating a TCP connection.
@@ -237,7 +238,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
   cerr << "Content Size: " << content_size << endl;
   cerr << "---------------\n";
 
-  content_size = content_size - (tcph_size*4) - (iph_size*4);
+  content_size = (content_size - 
+                   (tcph_size * NUM_BYTES_IN_A_WORD) - 
+                   (iph_size * NUM_BYTES_IN_A_WORD));
 
   cerr << "Packet Content Size: \n" << content_size << endl;
   cerr << "---------------\n";
@@ -297,7 +300,8 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           list_search->state.SetLastAcked(ack);
           list_search->state.SetSendRwnd(window_size);
           list_search->state.last_sent = list_search->state.last_sent + 1;
-
+          
+          
           //for timeout
           // list_search-->bTmrActive = false;
 
@@ -332,7 +336,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
           list_search->bTmrActive = false;
 
           SockRequestResponse write (WRITE, 
-          list_search->connection, content, 0, EOK);
+                                       list_search->connection, content, 0, EOK);
           MinetSend(sock, write);
 
         }
@@ -340,6 +344,10 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
       break;
     case ESTABLISHED:
       cerr << "\n--------------------ESTABLISHED--------------------\n";
+      // if (IS_PSH(flag) && !IS_ACK(flag)) {
+      //  
+      // }       |
+      // else if v
       if (IS_PSH(flag) && IS_ACK(flag)) {
         cerr << "\n------------ CASE PUSH AND ACK------------\n";
         cerr << "\nRecived '" << content << "'\nSize: "<< content.GetSize() << ".\n";
@@ -361,20 +369,68 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         MinetSend(mux, p_send);
         cerr << "\n------------ END PUSH ACK ------------\n";
       } 
-      else if (IS_FIN(flag) && IS_ACK(flag)) {
+      else if (IS_FIN(flag) && !IS_ACK(flag)) {
         cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
-        //make_packet(p, *list_search, FIN, 0, false);
-        //MinetSend(mux, p); 
+        list_search->state.SetState(CLOSE_WAIT);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        list_search->state.last_acked = ack; 
+        make_packet(p_send, *list_search, ACK, 0, false);
+        MinetSend(mux, p_send);
+        // Send my own FIN
+        Packet p;
+        list_search->state.SetState(LAST_ACK);
+        make_packet(p, *list_search, FIN, 0, false);
+        MinetSend(mux, p); 
+      }
+      else if (IS_FIN(flag) && IS_ACK(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED FIN ACK~~~~~~~~~~\n";
+        list_search->state.SetState(CLOSED);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        make_packet(p_send, *list_search, ACK, 0, false);
+        MinetSend(mux, p_send);
+        clist.erase(list_search);     
       }
       else if (IS_ACK(flag)) {
-        // Delete things from the send buffer.
-        list_search->state.SetLastRecvd((unsigned int)seqnum);
-        list_search->state.last_acked = ack;
+        cerr << "\n~~~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
+        // If the ack number is larger than last ack it is new
+        // otherwise the ack is a duplicate
+        if (ack > list_search->state.last_acked) {
+          list_search->state.SetLastRecvd((unsigned int)seqnum);
+          list_search->state.last_acked = ack;
+        }
       }
       else {
         cerr << "\nUnknown Packet\n";
       }
-    break;  
+      break;
+    case LAST_ACK:
+      cerr << "\n~~~~~~~~~~~~~~~~~CASE LAST ACK~~~~~~~~~~~~~~~~~~~\n";
+      if (IS_ACK(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~\n";
+        list_search->state.SetState(CLOSED);
+        clist.erase(list_search);
+      }
+      break;
+    case FIN_WAIT1:
+      cerr << "\n~~~~~~~~~~~~~~CASE FIN_WAIT1~~~~~~~~~~~~~~~\n";
+      if (IS_ACK(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
+        list_search->state.SetState(FIN_WAIT2);
+      }
+      // If we get a FINACK
+      // send ACK
+      // move to time wait
+      break;
+    case FIN_WAIT2:
+      cerr << "\n~~~~~~~~~~~~~~~CASE FIN_WAIT2~~~~~~~~~~~~~~\n";
+      if (IS_FIN(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
+        list_search->state.SetState(TIME_WAIT);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        make_packet(p_send, *list_search, ACK, 0 ,false);
+        MinetSend(mux, p_send); 
+      }
+      break;
   }
 
   cerr << "\nNew State:\n";
@@ -412,7 +468,9 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         // Make the packet
         make_packet(p, CTSM, SYN, 0, false);
         // Send the packet (twice in case there is not ARP entry and Minet
-        // drops the packet
+        // drops the packet)
+        //
+        // Should be able to remove this double send because of timeouts
         MinetSend(mux, p);
         sleep(2);
         MinetSend(mux, p);
@@ -531,6 +589,7 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         if (state == ESTABLISHED) {
           iter->state.SetState(FIN_WAIT1);
           iter->state.last_acked = iter->state.last_acked + 1;
+          // Could be just FIN
           make_packet(p, *iter, FINACK, 0, false);
           MinetSend(mux, p);
          
@@ -650,3 +709,4 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   cerr << "\n~~~~~~~~~~~~Done Sending Data~~~~~~~~~~~~\n";
   return bytes_left;
 }
+
