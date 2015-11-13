@@ -75,6 +75,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
 void handle_sock(MinetHandle &mux, MinetHandle &sock, 
                    ConnectionList<TCPState> &clist);
 
+void handle_timeout(MinetHandle &mux, ConnectionList<TCPState>::iterator iter, 
+                      ConnectionList<TCPState> &clist); 
+
 /* void make_packet
  * Arguments:
  *   Packet &p: The packet object that will have the headers added to it
@@ -158,6 +161,11 @@ int main(int argc, char * argv[]) {
 
     if (event.eventtype == MinetEvent::Timeout) {
       // timeout ! probably need to resend some packets
+      ConnectionList<TCPState>::iterator iter = clist.FindEarliest();
+      if (cs != clist.end()) {
+        if (Time().operator > ((*iter).timeout)) {
+          handle_timeout(mux, iter, clist);
+      }
     }
   }
 
@@ -344,16 +352,24 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
       break;
     case ESTABLISHED:
       cerr << "\n--------------------ESTABLISHED--------------------\n";
-      // if (IS_PSH(flag) && !IS_ACK(flag)) {
-      //  
-      // }       |
-      // else if v
-      if (IS_PSH(flag) && IS_ACK(flag)) {
-        cerr << "\n------------ CASE PUSH AND ACK------------\n";
+      if (IS_FIN(flag)) {
+        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
+        list_search->state.SetState(CLOSE_WAIT);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        //list_search->state.last_acked = ack;
+        make_packet(p_send, *list_search, ACK, 0, false);
+        MinetSend(mux, p_send);
+        Packet p;
+        list_search->state.SetState(LAST_ACK);
+        make_packet(p, *list_search, FIN, 0, false); 
+        MinetSend(mux, p);
+      }
+      if (IS_PSH(flag) || content_size != 0) {
+        cerr << "\n------------Received Push------------\n";
         cerr << "\nRecived '" << content << "'\nSize: "<< content.GetSize() << ".\n";
         list_search->state.SetSendRwnd(window_size);
         list_search->state.last_recvd = seqnum + content.GetSize();
-        list_search->state.last_acked = ack;
+        //list_search->state.last_acked = ack;
         list_search->state.RecvBuffer.AddBack(content);
         SockRequestResponse write(WRITE, list_search->connection,
                                    list_search->state.RecvBuffer, 
@@ -363,40 +379,21 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         // Remove the data from the recvbuffer once passed up.
         cerr << "\n~Sent up Data:\n" << list_search->state.RecvBuffer;
         list_search->state.RecvBuffer.Clear();
-
         //Send ACK
         make_packet(p_send, *list_search, ACK, 0, false);
         MinetSend(mux, p_send);
-        cerr << "\n------------ END PUSH ACK ------------\n";
-      } 
-      else if (IS_FIN(flag) && !IS_ACK(flag)) {
-        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
-        list_search->state.SetState(CLOSE_WAIT);
-        list_search->state.SetLastRecvd(seqnum + 1);
-        list_search->state.last_acked = ack; 
-        make_packet(p_send, *list_search, ACK, 0, false);
-        MinetSend(mux, p_send);
-        // Send my own FIN
-        Packet p;
-        list_search->state.SetState(LAST_ACK);
-        make_packet(p, *list_search, FIN, 0, false);
-        MinetSend(mux, p); 
+        cerr << "\n------------ END PUSH -------------\n";
       }
-      else if (IS_FIN(flag) && IS_ACK(flag)) {
-        cerr << "\n~~~~~~~~~~~~RECIVED FIN ACK~~~~~~~~~~\n";
-        list_search->state.SetState(CLOSED);
-        list_search->state.SetLastRecvd(seqnum + 1);
-        make_packet(p_send, *list_search, ACK, 0, false);
-        MinetSend(mux, p_send);
-        clist.erase(list_search);     
-      }
-      else if (IS_ACK(flag)) {
+      if (IS_ACK(flag)) {
         cerr << "\n~~~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
         // If the ack number is larger than last ack it is new
         // otherwise the ack is a duplicate
         if (ack > list_search->state.last_acked) {
-          list_search->state.SetLastRecvd((unsigned int)seqnum);
           list_search->state.last_acked = ack;
+        }
+        if (list_search->state.GetState() == LAST_ACK) {
+          list_search->state.SetState(CLOSED);
+          clist.erase(list_search); 
         }
       }
       else {
@@ -412,20 +409,37 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
       }
       break;
     case FIN_WAIT1:
+      // If we sent a FIN
       cerr << "\n~~~~~~~~~~~~~~CASE FIN_WAIT1~~~~~~~~~~~~~~~\n";
       if (IS_ACK(flag)) {
-        cerr << "\n~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
+        // If we recived an ACK
+        cerr << "\n~~~~~~~~~~~~RECEIVED ACK~~~~~~~~~~~~\n";
         list_search->state.SetState(FIN_WAIT2);
       }
-      // If we get a FINACK
-      // send ACK
-      // move to time wait
+      if (IS_FIN(flag)) {
+        // If we recived a FINACK
+        cerr << "\n~~~~~~~~~~~~RECEIVED FINACK~~~~~~~~~~~~\n";
+        list_search->state.SetState(TIME_WAIT);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        make_packet(p_send, *list_search, ACK, 0, false);
+        MinetSend(mux, p_send);
+      }
       break;
     case FIN_WAIT2:
+      // If we have sent a syn and recived an ACK
       cerr << "\n~~~~~~~~~~~~~~~CASE FIN_WAIT2~~~~~~~~~~~~~~\n";
       if (IS_FIN(flag)) {
-        cerr << "\n~~~~~~~~~~~~RECIVED FIN~~~~~~~~~~~~\n";
+        cerr << "\n~~~~~~~~~~~~RECEIVED FIN~~~~~~~~~~~~\n";
         list_search->state.SetState(TIME_WAIT);
+        list_search->state.SetLastRecvd(seqnum + 1);
+        make_packet(p_send, *list_search, ACK, 0 ,false);
+        MinetSend(mux, p_send); 
+      }
+      break;
+    case TIME_WAIT:
+      cerr << "\n~~~~~~~~~~~~~~~CASE TIME_WAIT~~~~~~~~~~~~~\n";
+      if (IS_FIN(flag)) {
+        cerr << "\n~~~~~~~~~~~~Received FIN AGAIN~~~~~~~~~~~~\n";
         list_search->state.SetLastRecvd(seqnum + 1);
         make_packet(p_send, *list_search, ACK, 0 ,false);
         MinetSend(mux, p_send); 
@@ -468,9 +482,7 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         // Make the packet
         make_packet(p, CTSM, SYN, 0, false);
         // Send the packet (twice in case there is not ARP entry and Minet
-        // drops the packet)
-        //
-        // Should be able to remove this double send because of timeouts
+        // drops the packet).
         MinetSend(mux, p);
         sleep(2);
         MinetSend(mux, p);
@@ -589,8 +601,8 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
         if (state == ESTABLISHED) {
           iter->state.SetState(FIN_WAIT1);
           iter->state.last_acked = iter->state.last_acked + 1;
-          // Could be just FIN
-          make_packet(p, *iter, FINACK, 0, false);
+          // Can send a FINACK
+          make_packet(p, *iter, FIN, 0, false);
           MinetSend(mux, p);
          
           repl.type = STATUS;
@@ -682,8 +694,12 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   tcpheader.SetFlags(flags, p);
 
   // Time out stuff changing the Seq\ACK?
-  // If it is a time out I want the Seqnum to be the last thing Ack'd
-  tcpheader.SetSeqNum(CTSM.state.GetLastSent() + 1, p);
+  if (isTimeout) {
+    tcpheader.SetSeqNum(CTSM.state.GetLastAcked(), p);
+  }
+  else {
+    tcpheader.SetSeqNum(CTSM.state.GetLastSent() + 1, p);
+  }
   tcpheader.RecomputeChecksum(p);
   
   cerr << "\nTCP Header: \n" << tcpheader << endl;
@@ -710,3 +726,30 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   return bytes_left;
 }
 
+void handle_timeout(MinetHandle &mux, ConnectionList<TCPState>::iterator iter,
+                      ConnectionList<TCPState> clist) {
+  unsigned int state = iter->state.GetState();
+  Packet p;
+  switch (state) {
+    case SYN_SENT:
+      // Resend SYN
+      break;
+    case SYN_RECVD:
+      // Resend SYNACK
+      break;
+    case ESTABLISHED:
+      // Go Back N stuff
+      break;
+    case LAST_ACK:
+      // Resend FIN
+      make_packet(p, *iter, FIN, 0, false);
+      MinetSend(mux, p);
+      break;
+    case TIME_WAIT:
+      cerr << "~~~~~~~~TIME WAIT ENDED~~~~~~~"
+      iter->state.SetState(CLOSED);
+      clist.erase(iter);
+    default:
+      break;
+  }
+} 
