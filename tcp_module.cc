@@ -123,8 +123,7 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
  *     if for with information that will be added to the Headers.
  *   TYPE HeaderType: The type if data that will be sent.
  *   Buffer data: A buffer full of the data that will be sent.
- *   // TOADD
- *   boolean isTimeout?
+ *   bool isTimeout: a flag if the send data is a timeout or not.
  *
  * Returns:
  *   int: returns the number of bytes send or 0 is error.
@@ -134,7 +133,7 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
  *   sent.
  */
 int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
-                Buffer data);
+                Buffer data, bool isTimeout);
 
 int main(int argc, char * argv[]) {
   MinetHandle mux;
@@ -422,15 +421,19 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         cerr << "\n------------ END PUSH -------------\n";
       }
       // If the packet is an ACK
-      // TODO remove data from the sendbuffer once it is ACK's
       if (IS_ACK(flag)) {
         cerr << "\n~~~~~~~~~~~~~~RECIVED ACK~~~~~~~~~~~~\n";
         // If the ack number is larger than last ack it is new
         // otherwise the ack is a duplicate
         if (ack >= list_search->state.last_acked) {
+          int amount_of_data_acked = ack - list_search->state.last_acked;
           list_search->state.last_acked = ack;
+          list_search->state.SendBuffer.Erase(0, amount_of_data_acked);
           // Turn off the timer for if there is no data in-flight
           list_search->bTmrActive = false; 
+          // For testing
+          cerr << "\n~~~~~~~~~~~Send Buffer~~~~~~~~~~~\n";
+          cerr << list_search->state.SendBuffer << endl;
         }
         // If we have moved into LAST_ACK from this packet move to CLOSED
         // This happens when the received packet is a FINACK
@@ -470,7 +473,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         // Set timeout for our ACK if this times out without receiving a 
         // new FIN we will close the connection.
         list_search->bTmrActive = true;
-        list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
+        list_search->timeout=Time() + (2*MSL_TIME_SECS);
         MinetSend(mux, p_send);
       }
       break;
@@ -485,7 +488,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock,
         make_packet(p_send, *list_search, ACK, 0 ,false);
         // TIME_WAIT timeout to close the connection.
         list_search->bTmrActive = true;
-        list_search->timeout=Time() + 5; //(2*MSL_TIME_SECS);
+        list_search->timeout=Time() + (2*MSL_TIME_SECS);
         MinetSend(mux, p_send); 
       }
       break;
@@ -645,7 +648,9 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock,
             iter->bTmrActive = true;
             iter->timeout=Time() + 8;
             // Send Data
-            int return_value = send_data(mux, *iter, copy);  
+            int return_value = send_data(mux, *iter, copy, false);
+            cerr << "\n~~~~~~~~~~~~~~~~~SEND BUFFER~~~~~~~~~~~~~\n";
+            cerr << iter->state.SendBuffer << endl;  
             // If the send was successful tell the socket
             if (return_value == 0) {
               repl.type = STATUS;
@@ -773,7 +778,6 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   // If this is a retransmission the sequence number is the last 
   // seq number that the other party ACK'd other wise it is the last thing you
   // sent plus 1
-  // Not 100% about this
   if (isTimeout) {
     tcpheader.SetSeqNum(CTSM.state.GetLastAcked(), p);
   }
@@ -788,26 +792,48 @@ void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM,
   cerr << "\n~~~~~~~~~~~~~~~Done Making Packet~~~~~~~~~~~~~~~\n"; 
 }
 
-// TODO update for retransmissions? maybe just adjust the CTSM before calling
 int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
-                 Buffer data) {
+                 Buffer data, bool isTimeout) {
   cerr << "\n~~~~~~~~~~~Start Sending Data~~~~~~~~~~\n";
   Packet p;
-  // Add the data to the send buffer
-  CTSM.state.SendBuffer.AddBack(data);
-  unsigned int bytes_left = data.GetSize();
+  unsigned int last;
+  unsigned int bytes_left;
+  // If this is not a time out only send the new data
+  if (!isTimeout) {
+    // Add the data to the send buffer
+    last = CTSM.state.SendBuffer.GetSize();
+    CTSM.state.SendBuffer.AddBack(data);
+    bytes_left = data.GetSize();
+  } else {
+    // Send all the old data in the buffer
+    last = 0;
+    bytes_left = CTSM.state.SendBuffer.GetSize();
+  }
   // While you haven't sent everything in the buffer
   while (bytes_left != 0) {
     // Send either the number of bytes left or the most you can
     unsigned int bytes_to_send = min(bytes_left, TCP_MAXIMUM_SEGMENT_SIZE);
     // Add the data to the packet
-    p = CTSM.state.SendBuffer.Extract(0, bytes_to_send);
+    //p = CTSM.state.SendBuffer.Extract(0, bytes_to_send);
     // Make the packet and send it
-    make_packet(p, CTSM, PSHACK, bytes_to_send, false);
+    //TESTING
+    char data_string[bytes_to_send + 1];
+    cerr << "\nOffset:\n" << last << endl;
+    int data_size = CTSM.state.SendBuffer.GetData(data_string, bytes_to_send, last);
+    data_string[data_size + 1] = '\0';
+    cerr << "Data Pulled: \n" << data_string;
+    // Make Buffer
+    Buffer send_buf;
+    send_buf.SetData(data_string, data_size, 0);
+    cerr << "Buffer Version: \n" << send_buf;
+    p = send_buf.Extract(0, data_size);
+    //
+    make_packet(p, CTSM, PSHACK, data_size, isTimeout);
     MinetSend(mux, p);
     CTSM.state.last_sent = CTSM.state.last_sent + bytes_to_send;
     // update the number of bytes left to send.
     bytes_left = bytes_left - bytes_to_send;
+    last = last + data_size;
   }
   cerr << "\n~~~~~~~~~~~~Done Sending Data~~~~~~~~~~~~\n";
   return bytes_left;
@@ -837,7 +863,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator i
     case ESTABLISHED:
       // resend the SendBuffer
       data = iter->state.SendBuffer;
-      send_data(mux, *iter, data);
+      send_data(mux, *iter, data, true);
       break;
     // Timeout after our initial FIN
     case FIN_WAIT1:
