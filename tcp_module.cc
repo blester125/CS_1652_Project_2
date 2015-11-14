@@ -798,6 +798,7 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   Packet p;
   unsigned int last;
   unsigned int bytes_left;
+  int loop_counter = 0;
   // If this is not a time out only send the new data
   if (!isTimeout) {
     // Add the data to the send buffer
@@ -813,27 +814,31 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM,
   while (bytes_left != 0) {
     // Send either the number of bytes left or the most you can
     unsigned int bytes_to_send = min(bytes_left, TCP_MAXIMUM_SEGMENT_SIZE);
-    // Add the data to the packet
-    //p = CTSM.state.SendBuffer.Extract(0, bytes_to_send);
-    // Make the packet and send it
-    //TESTING
+    // create array of data pulled from SendBuffer
     char data_string[bytes_to_send + 1];
     cerr << "\nOffset:\n" << last << endl;
     int data_size = CTSM.state.SendBuffer.GetData(data_string, bytes_to_send, last);
     data_string[data_size + 1] = '\0';
     cerr << "Data Pulled: \n" << data_string;
-    // Make Buffer
+    // Make Buffer out oof data
     Buffer send_buf;
     send_buf.SetData(data_string, data_size, 0);
     cerr << "Buffer Version: \n" << send_buf;
+    // add buffer to packet
     p = send_buf.Extract(0, data_size);
-    //
-    make_packet(p, CTSM, PSHACK, data_size, isTimeout);
+    // if this is the first packet in a chunk of data the seq may be reset from
+    // a timeout other wise the seq num is pulled from last sent
+    if (loop_counter == 0) {
+      make_packet(p, CTSM, PSHACK, data_size, isTimeout);
+    } else {
+      make_packet(p, CTSM, PSHACK, data_size, false);
+    }
     MinetSend(mux, p);
     CTSM.state.last_sent = CTSM.state.last_sent + bytes_to_send;
     // update the number of bytes left to send.
     bytes_left = bytes_left - bytes_to_send;
     last = last + data_size;
+    loop_counter = loop_counter + 1;
   }
   cerr << "\n~~~~~~~~~~~~Done Sending Data~~~~~~~~~~~~\n";
   return bytes_left;
