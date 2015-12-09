@@ -1,5 +1,5 @@
 # CS_1652_Project_2
-TCP Implementation with Minet
+TCP Implementation with Minet. Multiple in flight packets are supported using Go-Back N
 
 Group Members:
 Brian Lester, Carmen Condeluci
