@@ -1,4 +1,4 @@
-# CS_1652_Project_2
+# CS 1652 Project 2
 TCP Implementation with Minet. Multiple in flight packets are supported using Go-Back N
 
 Group Members:
